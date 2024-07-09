@@ -73,121 +73,98 @@
 #     })
 
 import os
-from dotenv import load_dotenv
 from flask import Blueprint, request, jsonify
-from neo4j import GraphDatabase
 from langchain_groq import ChatGroq
 from langchain.chains import LLMChain
-from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
-import spacy
-import time
+from langchain_core.output_parsers import StrOutputParser
+from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate, MessagesPlaceholder
+import logging
+from .history import CustomConversationBufferMemory
+from .setup_neo4j import check_fulltext_index
+from .query_operation import Neo4jOperations
 
-load_dotenv()
-
+check_fulltext_index()
 main = Blueprint('main', __name__)
 
-URI = os.getenv("NEO4J_URI")
-USER = os.getenv("NEO4J_USER")
-PASSWORD = os.getenv("NEO4J_PASSWORD") 
 
-driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-nlp = spacy.load("en_core_web_sm")
+neo4j_ops = Neo4jOperations()
 
-def extract_entities(question):
-    doc = nlp(question)
-    entities = {
-        'LOCATION': [],
-        'ORG': [],
-        'PRODUCT': [],
-        'GPE': [] 
-    }
-    for ent in doc.ents:
-        if ent.label_ in entities:
-            entities[ent.label_].append(ent.text)
-    return entities
+memory = CustomConversationBufferMemory(return_messages=True, max_messages=20)
 
-def construct_cypher_query(entities, question):
-    query_parts = []
-    params = {}
 
-    if entities['ORG'] or entities['PRODUCT']:
-        query_parts.append("MATCH (s:Startup)")
-        if entities['ORG']:
-            query_parts.append("WHERE s.name =~ $org_regex")
-            params['org_regex'] = f"(?i).*{'|'.join(entities['ORG'])}.*"
-        if entities['PRODUCT']:
-            query_parts.append("WHERE s.category =~ $product_regex OR EXISTS((s)-[:IN_CATEGORY]->(:Category {name: $product}))")
-            params['product_regex'] = f"(?i).*{'|'.join(entities['PRODUCT'])}.*"
-            params['product'] = entities['PRODUCT'][0].lower()
-
-    if entities['LOCATION'] or entities['GPE']:
-        if not query_parts:
-            query_parts.append("MATCH (s:Startup)")
-        query_parts.append("WHERE s.location =~ $location_regex")
-        params['location_regex'] = f"(?i).*{'|'.join(entities['LOCATION'] + entities['GPE'])}.*"
-
-    if not query_parts:
-        
-        query_parts.append("MATCH (s:Startup)")
-        query_parts.append("WHERE s.name =~ $general_regex OR s.category =~ $general_regex OR s.location =~ $general_regex OR s.status =~ $general_regex")
-        params['general_regex'] = f"(?i).*{question}.*"
-
-    query_parts.append("RETURN s.name AS name, s.location AS location, s.category AS category, s.status AS status")
-    query_parts.append("LIMIT 5")
-
-    return " ".join(query_parts), params
-
-def query_neo4j(question):
-    entities = extract_entities(question)
-    query, params = construct_cypher_query(entities, question)
-
-    with driver.session() as session:
-        result = session.run(query, params)
-        
-        startup_info = []
-        for record in result:
-            info = f"Name: {record['name']}\n"
-            info += f"Location: {record['location']}\n"
-            info += f"Category: {record['category']}\n"
-            info += f"Status: {record['status']}"
-            startup_info.append(info)
-        
-        return "\n\n".join(startup_info)
 
 @main.route('/query', methods=['POST'])
-def query():
+async def query():
     data = request.get_json()
     user_question = data.get('question')
 
-    context = query_neo4j(user_question)
+    neo4j_ops = Neo4jOperations()
+    results = await neo4j_ops.query_neo4j_async(user_question)
+
+    # Format the results
+    # formatted_context = "Here are the top startup results based on the query:\n\n"
+    # for entity_type, results in neo4j_results.items():
+    #     formatted_context += f"Results for {entity_type}:\n"
+    #     for result in results:
+    #         formatted_context += f"Name: {result['name']}\n"
+    #         formatted_context += f"Location: {result['location']}\n"
+    #         formatted_context += f"Category: {result['category']}\n"
+    #         formatted_context += f"Status: {result['status']}\n\n"
+    #     formatted_context += "\n"
+
+    formatted_results = []
+    for result in results:
+        formatted_results.append(str(result))
 
     groq_api_key = os.getenv("GROQ_API_KEY")
-    llm = ChatGroq(groq_api_key=groq_api_key, model_name='llama3-8b-8192', temperature=0)
+    llm = ChatGroq(
+        groq_api_key=groq_api_key, 
+        model_name='llama3-8b-8192', 
+        temperature=0,
+        max_tokens=300
+    )
+
+    system_template = """You are a startup-focused chatbot. Your knowledge comes EXCLUSIVELY from the following context. 
+                        Do not use any information outside of this context. If the context doesn't contain relevant information, 
+                        say that you don't have enough information to answer the question.
+
+                        Context:
+                        {context}
+
+                        Answer the user's question based ONLY on the information provided in the context above. 
+                        If asked about specific details like locations, always provide the full information available in the context.
+                        If the question cannot be answered using the given context, say so clearly."""
 
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessagePromptTemplate.from_template(
-            "You are a startup-focused chatbot. Your knowledge comes EXCLUSIVELY from the following context. "
-            "Do not use any information outside of this context. If the context doesn't contain relevant information, "
-            "say that you don't have enough information to answer the question.\n\nContext:\n{context}\n\n"
-            "Answer the user's question based ONLY on the information provided in the context above. "
-            "If you can't find the answer in the context, say so clearly."
-        ),
-        HumanMessagePromptTemplate.from_template("{input}")
+        ("system", system_template),
+        MessagesPlaceholder(variable_name="history"),
+        ("human", "{input}")
     ])
 
-    chain = LLMChain(llm=llm, prompt=prompt)
+    chain = LLMChain(
+        llm=llm, 
+        prompt=prompt,
+        memory=memory,
+        verbose=True,
+        output_parser=StrOutputParser()
+    )
 
-    
-    response = "AI Assistant: " + chain.run(input=user_question, context=context)
-    
-    full_response = f"{response}\n"
+    try:
+        response = chain.run(input=user_question, context=formatted_results)
+    except Exception as e:
+        print(f"Error in LLMChain: {str(e)}")
+        response = "I'm sorry, but I encountered an error while processing your request."
+
+    full_response = f"AI Assistant: {response}\n"
 
     return jsonify({
         'response': full_response,
-        'context_used': context,
+        'context_used': formatted_results,
     })
 
 @main.teardown_app_request
 def close_neo4j_driver(exception=None):
-    driver.close()
+    neo4j_ops.close()

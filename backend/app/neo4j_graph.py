@@ -29,52 +29,6 @@ def get_synonyms(word):
             synonyms.add(lemma.name().lower().replace('_', ' '))
     return list(synonyms)
 
-# def create_neo4j_graph(data):
-#     driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
-    
-#     try:
-#         with driver.session() as session:
-#             try:
-#                 session.run("CREATE CONSTRAINT startup_name IF NOT EXISTS FOR (s:Startup) REQUIRE s.name IS UNIQUE")
-#             except Exception as e:
-#                 print(f"Constraint creation failed (it might already exist): {e}")
-
-#             for _, row in data.iterrows():
-#                 result = session.run("""
-#                     MATCH (s:Startup {name: $name})
-#                     RETURN s
-#                 """, {'name': row['name']})
-                
-#                 if not result.single():
-#                     session.run("""
-#                         CREATE (s:Startup {
-#                             name: $name,
-#                             location: $location,
-#                             category: $category,
-#                             status: $status
-#                         })
-#                     """, row.to_dict())
-
-                    
-#                     category_synonyms = get_synonyms(row['category'])
-#                     for synonym in category_synonyms:
-#                         session.run("""
-#                             MATCH (s:Startup {name: $name})
-#                             MERGE (c:Category {name: $synonym})
-#                             CREATE (s)-[:IN_CATEGORY]->(c)
-#                         """, {'name': row['name'], 'synonym': synonym})
-                    
-#                     print(f"Added startup: {row['name']}")
-#                 else:
-#                     print(f"Skipped existing startup: {row['name']}")
-
-#             print("Neo4j graph update completed.")
-
-#     except Exception as e:
-#         print(f"An error occurred: {e}")
-#     finally:
-#         driver.close()
-
 def create_neo4j_graph(data):
     driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
     

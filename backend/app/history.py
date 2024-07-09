@@ -1,8 +1,7 @@
-
 from typing import Dict, Any, List
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import BaseChatMessageHistory, BaseMessage
-from langchain.prompts import HumanMessagePromptTemplate, SystemMessagePromptTemplate
+from langchain.schema import HumanMessage, AIMessage, SystemMessage
 
 class CustomChatMessageHistory(BaseChatMessageHistory):
     def __init__(self, max_messages=10):
@@ -27,12 +26,10 @@ class CustomConversationBufferMemory(ConversationBufferMemory):
 
     def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
         input_str = inputs.get("input", "")
-        context_str = inputs.get("context", "")
         output_str = outputs.get("text", "")
         
-        self.chat_memory.add_message(HumanMessagePromptTemplate.from_template(input_str).format())
-        self.chat_memory.add_message(SystemMessagePromptTemplate.from_template(context_str).format())
-        self.chat_memory.add_message(HumanMessagePromptTemplate.from_template(output_str).format())
+        self.chat_memory.add_message(HumanMessage(content=input_str))
+        self.chat_memory.add_message(AIMessage(content=output_str))
 
     def clear(self) -> None:
         self.chat_memory.clear()
