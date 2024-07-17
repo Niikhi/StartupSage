@@ -11,6 +11,7 @@ function App() {
     const [chatHistory, setChatHistory] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const chatEndRef = useRef(null);
+    axios.defaults.baseURL = 'http://127.0.0.1:8000';
     
 
 
@@ -49,7 +50,7 @@ function App() {
 
     const sendQuestion = async (question) => {
         try {
-            const response = await axios.post('http://localhost:5001/query', { question });
+            const response = await axios.post('/query', { question });
             appendBotMessage(response.data.response);
         } catch (error) {
             console.error('Error sending question:', error);

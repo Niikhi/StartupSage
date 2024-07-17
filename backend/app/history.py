@@ -17,7 +17,7 @@ class CustomChatMessageHistory(BaseChatMessageHistory):
         self.messages = []
 
 class CustomConversationBufferMemory(ConversationBufferMemory):
-    def __init__(self, *args, max_messages=10, **kwargs):
+    def __init__(self, *args, max_messages=5, **kwargs):
         super().__init__(*args, **kwargs)
         self.chat_memory = CustomChatMessageHistory(max_messages=max_messages)
 
@@ -26,7 +26,7 @@ class CustomConversationBufferMemory(ConversationBufferMemory):
 
     def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
         input_str = inputs.get("input", "")
-        output_str = outputs.get("text", "")
+        output_str = outputs.get("output", "")
         
         self.chat_memory.add_message(HumanMessage(content=input_str))
         self.chat_memory.add_message(AIMessage(content=output_str))
